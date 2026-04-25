@@ -1,7 +1,8 @@
 import { initScene, animate, setCursor } from './rendering/scene.js';
 import { startTracking } from './tracking/handTracking.js';
 import { recognizeSpell } from './spells/recognizer.js';
-import { startDrawing, addDrawPoint, resolveSpell } from './spells/spellState.js';
+import { startDrawing, addDrawPoint, resolveSpell, setPhaseChangeCallback } from './spells/spellState.js';
+import { audioEngine } from './utils/audio.js';
 
 const PINCH_ON      = 0.07;   // threshold to start/continue drawing
 const PINCH_OFF     = 0.10;   // threshold to release (hysteresis prevents flicker)
@@ -15,6 +16,15 @@ const OPEN_FRAMES_NEEDED = 3; // debounce: ignore single noisy open frames
 function main() {
     initScene();
     animate();
+
+    setPhaseChangeCallback((phase, spell) => {
+        if (phase === 'active' && spell !== 'neutral') {
+            audioEngine.playSpellSound(spell, phase);
+            audioEngine.updateAmbient(0.1);
+        } else if (phase === 'idle') {
+            audioEngine.updateAmbient(0.05);
+        }
+    });
 
     startTracking((landmarks) => {
         const lm = landmarks[0];
@@ -40,6 +50,7 @@ function main() {
             if (!isDrawing) {
                 isDrawing = true;
                 path = [];
+                audioEngine.init();
                 startDrawing();
             }
             // Only add point if hand moved enough (avoids dense duplicate clusters)
