@@ -1,88 +1,21 @@
-import { initParticles, updateParticles } from './particles.js';
-import { drawEnergyRibbon, drawSpellEffect } from './effects.js';
-import { tickState, getState } from '../spells/spellState.js';
+import * as THREE from 'three';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-let canvas, ctx;
-let cursor = null;      // { x, y } in [0,1] normalized, or null
-let cursorPinching = false;
+import { initParticles, updateParticles, triggerSpell, resetToAmbient } from './particles.js';
+import { initDrawPath, updateDrawPath, clearDrawPath }                   from './drawPath.js';
+import { tickState }                                                      from '../spells/spellState.js';
 
-export function initScene() {
-    canvas = document.getElementById('magic-canvas');
-    ctx    = canvas.getContext('2d');
+// ── Three.js core ──────────────────────────────────────────────────────────────
+let renderer, camera, scene, composer, bloomPass;
 
-    resize();
-    window.addEventListener('resize', resize);
+// ── Cursor state ───────────────────────────────────────────────────────────────
+const cursorData = { pt: null, pinching: false };
+let cursorTorus, cursorSphere;
 
-    ctx.fillStyle = '#070813';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    initParticles(canvas);
-}
-
-function resize() {
-    const rect    = canvas.getBoundingClientRect();
-    canvas.width  = rect.width;
-    canvas.height = rect.height;
-    ctx.fillStyle = '#070813';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-}
-
-export function animate() {
-    requestAnimationFrame(animate);
-
-    const now   = performance.now();
-    const state = tickState(now);
-    const W     = canvas.width;
-    const H     = canvas.height;
-    const view  = { width: W, height: H };
-
-    // Fade-trail: paint dark overlay instead of clearing
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = 1;
-    ctx.fillStyle   = 'rgba(7, 8, 19, 0.18)';
-    ctx.fillRect(0, 0, W, H);
-
-    updateParticles(ctx, state, now);
-
-    if (state.phase !== 'idle' && state.rawPath.length > 1)
-        drawEnergyRibbon(ctx, state, view);
-
-    if (state.phase === 'flash' || state.phase === 'active' || state.phase === 'fading')
-        drawSpellEffect(ctx, state, view, now);
-
-    drawHUD(ctx, state, W, H, now);
-    drawCursor(ctx, W, H);
-}
-
-export function setCursor(pt, pinching) {
-    cursor         = pt;
-    cursorPinching = pinching;
-}
-
-function drawCursor(ctx, W, H) {
-    if (!cursor) return;
-    const cx = cursor.x * W, cy = cursor.y * H;
-    const r  = cursorPinching ? 6 : 10;
-    const color = cursorPinching ? '#ffffff' : '#4488ff';
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    ctx.globalAlpha = cursorPinching ? 1 : 0.7;
-    ctx.shadowBlur  = cursorPinching ? 20 : 10;
-    ctx.shadowColor = cursorPinching ? '#ffffff' : '#2255cc';
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = 1.5;
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-    // crosshair lines
-    ctx.beginPath();
-    ctx.moveTo(cx - r * 1.6, cy); ctx.lineTo(cx - r * 0.4, cy);
-    ctx.moveTo(cx + r * 0.4, cy); ctx.lineTo(cx + r * 1.6, cy);
-    ctx.moveTo(cx, cy - r * 1.6); ctx.lineTo(cx, cy - r * 0.4);
-    ctx.moveTo(cx, cy + r * 0.4); ctx.lineTo(cx, cy + r * 1.6);
-    ctx.stroke();
-    ctx.restore();
-}
-
+// ── HUD ────────────────────────────────────────────────────────────────────────
+const hudEl = document.getElementById('hud');
 const SPELL_LABEL = {
     circle:      'Aegis Rune',
     zigzag:      'Volt Sigil',
@@ -104,27 +37,167 @@ const HUD_COLOR = {
     figureeight: '#aa88ff',
 };
 
-function drawHUD(ctx, state, W, H) {
-    if (state.phase === 'idle' || state.phase === 'drawing') return;
+// ── Spell phase tracking for one-shot triggers ─────────────────────────────────
+let lastPhase = 'idle';
 
+// ── Ray-plane unprojection: [0,1]² → Three.js world space at z=0 ──────────────
+export function normToWorld(nx, ny) {
+    const ndcX =  nx * 2 - 1;
+    const ndcY = -(ny * 2 - 1);
+    const vec  = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
+    const dir  = vec.sub(camera.position).normalize();
+    const t    = -camera.position.z / dir.z;
+    return new THREE.Vector3(
+        camera.position.x + dir.x * t,
+        camera.position.y + dir.y * t,
+        0
+    );
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+export function initScene() {
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ReinhardToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    document.getElementById('app').appendChild(renderer.domElement);
+
+    // Camera
+    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 10;
+
+    // Scene
+    scene = new THREE.Scene();
+
+    // Post-processing
+    composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.0,   // strength
+        0.5,   // radius
+        0.1    // threshold
+    );
+    composer.addPass(bloomPass);
+
+    // Cursor meshes
+    const torusGeo  = new THREE.TorusGeometry(0.18, 0.025, 8, 32);
+    const sphereGeo = new THREE.SphereGeometry(0.08, 12, 8);
+    const cursorMat = (hex) => new THREE.MeshBasicMaterial({
+        color: hex,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+    });
+    cursorTorus  = new THREE.Mesh(torusGeo,  cursorMat(0x4488ff));
+    cursorSphere = new THREE.Mesh(sphereGeo, cursorMat(0xffffff));
+    cursorTorus.visible  = false;
+    cursorSphere.visible = false;
+    scene.add(cursorTorus, cursorSphere);
+
+    // Subsystems
+    initParticles(scene);
+    initDrawPath(scene);
+
+    window.addEventListener('resize', onResize);
+}
+
+function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+    bloomPass.resolution.set(window.innerWidth, window.innerHeight);
+}
+
+// ── Cursor (called from main.js) ───────────────────────────────────────────────
+export function setCursor(pt, pinching) {
+    cursorData.pt       = pt;
+    cursorData.pinching = pinching;
+}
+
+// ── Animate ────────────────────────────────────────────────────────────────────
+export function animate() {
+    requestAnimationFrame(animate);
+
+    const now   = performance.now();
+    const state = tickState(now);
+
+    // ── One-shot phase triggers ──────────────────────────────────────────────
+    if (state.phase !== lastPhase) {
+        if (state.phase === 'flash' && state.spell !== 'neutral') {
+            triggerSpell(state.spell, state);
+        }
+        if (state.phase === 'fading') {
+            resetToAmbient();
+        }
+        if (state.phase === 'idle') {
+            clearDrawPath();
+        }
+        lastPhase = state.phase;
+    }
+
+    // ── Bloom strength by phase ──────────────────────────────────────────────
+    if (state.phase === 'flash') {
+        bloomPass.strength = 1.5 + state.flashProgress * 3.0;
+    } else if (state.phase === 'active') {
+        bloomPass.strength = THREE.MathUtils.lerp(bloomPass.strength, 2.0, 0.05);
+    } else if (state.phase === 'drawing') {
+        bloomPass.strength = THREE.MathUtils.lerp(bloomPass.strength, 1.4, 0.08);
+    } else {
+        bloomPass.strength = THREE.MathUtils.lerp(bloomPass.strength, 1.0, 0.05);
+    }
+
+    // ── Draw path line ───────────────────────────────────────────────────────
+    if (state.phase !== 'idle') {
+        updateDrawPath(state.rawPath, state.phase, state.flashProgress ?? 0, normToWorld);
+    }
+
+    // ── Particles ────────────────────────────────────────────────────────────
+    updateParticles(now, state);
+
+    // ── Cursor ───────────────────────────────────────────────────────────────
+    cursorTorus.visible  = false;
+    cursorSphere.visible = false;
+    if (cursorData.pt) {
+        const w = normToWorld(cursorData.pt.x, cursorData.pt.y);
+        if (cursorData.pinching) {
+            cursorSphere.visible = true;
+            cursorSphere.position.lerp(w.setZ(0.1), 0.35);
+        } else {
+            cursorTorus.visible = true;
+            cursorTorus.position.lerp(w.setZ(0.1), 0.35);
+            cursorTorus.rotation.z += 0.04;
+        }
+    }
+
+    // ── HUD ──────────────────────────────────────────────────────────────────
+    updateHUD(state);
+
+    composer.render();
+}
+
+function updateHUD(state) {
+    if (state.phase === 'idle' || state.phase === 'drawing' || state.spell === 'neutral') {
+        hudEl.style.opacity = '0';
+        return;
+    }
     const label = SPELL_LABEL[state.spell];
-    if (!label) return;
-
-    let alpha = 1;
-    if (state.phase === 'flash')  alpha = state.flashProgress;
-    if (state.phase === 'fading') alpha = Math.max(0, 1 - (performance.now() - state.phaseStart) / 1100);
-
     const color = HUD_COLOR[state.spell] ?? '#aaaaff';
+    if (!label) { hudEl.style.opacity = '0'; return; }
 
-    ctx.save();
-    ctx.globalAlpha              = alpha * 0.9;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.font                     = 'bold 22px monospace';
-    ctx.textAlign                = 'center';
-    ctx.textBaseline             = 'bottom';
-    ctx.shadowBlur               = 18;
-    ctx.shadowColor              = color;
-    ctx.fillStyle                = color;
-    ctx.fillText(label, W / 2, H - 28);
-    ctx.restore();
+    hudEl.textContent = label;
+    hudEl.style.setProperty('--hud-color', color);
+
+    if (state.phase === 'flash') {
+        hudEl.style.opacity = String(state.flashProgress * 0.9);
+    } else if (state.phase === 'active') {
+        hudEl.style.opacity = '0.9';
+    } else if (state.phase === 'fading') {
+        const age = (performance.now() - state.phaseStart) / 1100;
+        hudEl.style.opacity = String(Math.max(0, 1 - age) * 0.9);
+    }
 }

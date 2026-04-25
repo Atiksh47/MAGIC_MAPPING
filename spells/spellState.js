@@ -44,6 +44,8 @@ export function resolveSpell(spell, rawPath) {
 }
 
 export function tickState(now) {
+    const prevPhase = state.phase;
+
     if (state.phase === 'flash') {
         state.flashProgress = Math.min(1, (now - state.phaseStart) / FLASH_MS);
         if (state.flashProgress >= 1) {
@@ -63,7 +65,14 @@ export function tickState(now) {
         }
     }
 
+    if (state.phase !== prevPhase && _onPhaseChange) {
+        _onPhaseChange(state.phase, state.spell);
+    }
+
     return state;
 }
 
 export function getState() { return state; }
+
+let _onPhaseChange = null;
+export function setPhaseChangeCallback(fn) { _onPhaseChange = fn; }
