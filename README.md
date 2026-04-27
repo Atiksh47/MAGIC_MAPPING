@@ -14,29 +14,32 @@ Open `index.html` in a browser, allow webcam access, and draw spell patterns.
 
 | Pattern | Spell | Visual Effect |
 |---|---|---|
-| ⭕ Circle | **Aqua Vortex** | Blue energy ribbons spiral outward with glowing particles |
-| ⚡ Zigzag | **Lightning Bolt** | Yellow jagged bolts crackle with electric sparks |
-| 🌀 Spiral | **Fire Storm** | Purple flames twist upward in a fiery whirlwind |
-| ➖ Line | **Earth Wall** | Orange stone pillars erupt in a straight formation |
-| Neutral | **Neutral** | Soft blue aura with ambient floating particles |
+| ⭕ Circle | **Aegis Rune** | Cyan Fibonacci sphere shell with shimmering protection aura |
+| ⚡ Zigzag | **Volt Sigil** | Yellow recursive lightning tree with branching electric bolts |
+| 🌀 Spiral | **Vortex Seal** | Purple contracting 3D helix that spirals inward and upward |
+| ➖ Line | **Rift Slash** | Orange fractured plane splitting into two halves with edge glow |
+| △ Triangle | **Primordial Flame** | Red tetrahedron with rising fire column and hot particle trails |
+| Ⓥ V-Shape | **Runic Wings** | Green swept wing pair flowing outward with elegant curves |
+| Z | **Glyph of Binding** | Orange glowing lattice cube with orbiting face-center rings |
+| ∞ Figure-8 | **Serpent's Eye** | Purple lemniscate torus with flowing figure-eight pattern |
 
 ---
 
 ## How It Works
 
 ### Stack
-- **Canvas 2D API** — 2D particle rendering with additive blending and trail effects
+- **Three.js + WebGL** — High-performance 3D particle rendering with custom shaders and additive blending
 - **[MediaPipe Hands](https://developers.google.com/mediapipe/solutions/vision/hand_landmarker)** — real-time hand landmark detection (21 keypoints per hand)
-- **Custom Particle System** — Ambient particles and spell-specific effects with dynamic colors
+- **Custom Particle System** — 20,000 GPU-accelerated particles with ambient drift and spell-specific effects
 - No build step — modular JavaScript files, all dependencies via CDN
 
 ### Particle System
-70 ambient particles float upward continuously. Spell casting adds targeted particles with colors matching the spell type (blue for circle, yellow for zigzag, etc.). Particles use velocity-based movement with life cycles for smooth animations.
+20,000 GPU-accelerated particles rendered via Three.js with custom GLSL shaders. The ambient state drifts particles in a Fibonacci sphere pattern. When spells are cast, particles smoothly interpolate to spell-specific formations with staggered delays for elegant transitions. Each spell has a unique 3D geometry and color palette.
 
 ### Spell Recognition
-Pinch your thumb and index finger to start drawing a path. Release to recognize the spell based on shape matching against predefined templates. Uses dynamic time warping for path comparison with a similarity threshold of 0.38.
+Pinch your thumb and index finger to start drawing a path. Release to recognize the spell based on shape matching against predefined templates. Uses rotational-invariant path distance matching with a similarity threshold of 0.65.
 
-Phases: drawing → charging (1.2s) → active (2.2s) → fading (0.9s).
+Phases: drawing → flash (0.32s) → active (3.0s) → fading (1.1s).
 
 ---
 
