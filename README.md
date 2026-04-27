@@ -70,14 +70,16 @@ magic_mapping/
 │   └── handTracking.js
 ├── spells/
 │   ├── recognizer.js
-│   ├── templates.js
-│   └── spellState.js
+│   ├── spellState.js
+│   └── templates.js
 ├── rendering/
 │   ├── scene.js
 │   ├── particles.js
-│   └── effects.js
+│   ├── drawPath.js
+│   └── spellParticles.js
 └── utils/
-    └── math.js
+    ├── math.js
+    └── audio.js
 ```
 
 ---
